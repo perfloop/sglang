@@ -170,6 +170,16 @@ impl Default for WorkerId {
     }
 }
 
+/// Key used for caching pre-filtered worker lists
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct FilterKey {
+    pub model_id: Option<String>,
+    pub worker_type: Option<WorkerType>,
+    pub connection_mode: Option<ConnectionMode>,
+    pub runtime_type: Option<RuntimeType>,
+    pub healthy_only: bool,
+}
+
 /// Model index using immutable snapshots for lock-free reads.
 /// Each model maps to an Arc'd slice of workers that can be read without locking.
 /// Updates create new snapshots (copy-on-write semantics).
@@ -201,6 +211,9 @@ pub struct WorkerRegistry {
     /// When None, the registry works independently without mesh synchronization
     /// Uses RwLock for thread-safe access when setting mesh_sync after initialization
     mesh_sync: Arc<RwLock<OptionalMeshSyncManager>>,
+    /// Cache of pre-filtered worker lists
+    #[allow(clippy::type_complexity)]
+    filtered_cache: Arc<DashMap<FilterKey, Arc<[Arc<dyn Worker>]>>>,
 }
 
 impl WorkerRegistry {
@@ -214,6 +227,7 @@ impl WorkerRegistry {
             connection_workers: Arc::new(DashMap::new()),
             url_to_id: Arc::new(DashMap::new()),
             mesh_sync: Arc::new(RwLock::new(None)),
+            filtered_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -240,6 +254,7 @@ impl WorkerRegistry {
 
     /// Register a new worker
     pub fn register(&self, worker: Arc<dyn Worker>) -> WorkerId {
+        self.filtered_cache.clear();
         let worker_id = if let Some(existing_id) = self.url_to_id.get(worker.url()) {
             // Worker with this URL already exists, update it
             existing_id.clone()
@@ -314,6 +329,7 @@ impl WorkerRegistry {
 
     /// Remove a worker by ID
     pub fn remove(&self, worker_id: &WorkerId) -> Option<Arc<dyn Worker>> {
+        self.filtered_cache.clear();
         if let Some((_, worker)) = self.workers.remove(worker_id) {
             // Remove from URL mapping
             self.url_to_id.remove(worker.url());
@@ -402,6 +418,7 @@ impl WorkerRegistry {
 
     /// Update worker health status and sync to mesh
     pub fn update_worker_health(&self, worker_id: &WorkerId, is_healthy: bool) {
+        self.filtered_cache.clear();
         if let Some(worker) = self.workers.get(worker_id) {
             // Update worker health (if Worker trait has a method for this)
             // For now, we'll just sync to mesh
@@ -517,47 +534,81 @@ impl WorkerRegistry {
         runtime_type: Option<RuntimeType>,
         healthy_only: bool,
     ) -> Vec<Arc<dyn Worker>> {
-        // Start with the most efficient collection based on filters
-        // Use model index when possible as it's O(1) lookup
-        let workers: Vec<Arc<dyn Worker>> = if let Some(model) = model_id {
-            self.get_by_model(model).to_vec()
-        } else {
-            self.get_all()
+        let key = FilterKey {
+            model_id: model_id.map(|s| s.to_string()),
+            worker_type: worker_type.clone(),
+            connection_mode: connection_mode.clone(),
+            runtime_type: runtime_type.clone(),
+            healthy_only,
         };
 
-        // Apply remaining filters
-        workers
-            .into_iter()
-            .filter(|w| {
-                // Check worker_type if specified
-                if let Some(ref wtype) = worker_type {
-                    if *w.worker_type() != *wtype {
+        if let Some(cached) = self.filtered_cache.get(&key) {
+            return cached.value().to_vec();
+        }
+
+        let workers = if let Some(model) = model_id {
+            self.model_index
+                .get(model)
+                .map(|snapshot| {
+                    snapshot
+                        .iter()
+                        .filter(|w| {
+                            if let Some(ref wtype) = worker_type {
+                                if *w.worker_type() != *wtype {
+                                    return false;
+                                }
+                            }
+                            if let Some(ref conn) = connection_mode {
+                                if !w.connection_mode().matches(conn) {
+                                    return false;
+                                }
+                            }
+                            if let Some(ref rt) = runtime_type {
+                                if w.metadata().runtime_type != *rt {
+                                    return false;
+                                }
+                            }
+                            if healthy_only && !w.is_healthy() {
+                                return false;
+                            }
+                            true
+                        })
+                        .cloned()
+                        .collect::<Vec<Arc<dyn Worker>>>()
+                })
+                .unwrap_or_default()
+        } else {
+            self.workers
+                .iter()
+                .filter(|entry| {
+                    let w = entry.value();
+                    if let Some(ref wtype) = worker_type {
+                        if *w.worker_type() != *wtype {
+                            return false;
+                        }
+                    }
+                    if let Some(ref conn) = connection_mode {
+                        if !w.connection_mode().matches(conn) {
+                            return false;
+                        }
+                    }
+                    if let Some(ref rt) = runtime_type {
+                        if w.metadata().runtime_type != *rt {
+                            return false;
+                        }
+                    }
+                    if healthy_only && !w.is_healthy() {
                         return false;
                     }
-                }
+                    true
+                })
+                .map(|entry| entry.value().clone())
+                .collect::<Vec<Arc<dyn Worker>>>()
+        };
 
-                // Check connection_mode if specified (using matches for flexible gRPC matching)
-                if let Some(ref conn) = connection_mode {
-                    if !w.connection_mode().matches(conn) {
-                        return false;
-                    }
-                }
-
-                // Check runtime_type if specified
-                if let Some(ref rt) = runtime_type {
-                    if w.metadata().runtime_type != *rt {
-                        return false;
-                    }
-                }
-
-                // Check health if required
-                if healthy_only && !w.is_healthy() {
-                    return false;
-                }
-
-                true
-            })
-            .collect()
+        let snapshot: Arc<[Arc<dyn Worker>]> = Arc::from(workers.into_boxed_slice());
+        self.filtered_cache.insert(key, Arc::clone(&snapshot));
+        snapshot.to_vec()
     }
 
     /// Get worker statistics (lock-free)
