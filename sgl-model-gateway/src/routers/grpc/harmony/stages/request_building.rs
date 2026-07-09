@@ -166,7 +166,8 @@ impl PipelineStage for HarmonyRequestBuildingStage {
             _ => unreachable!(), // All other request types should be handled above
         };
 
-        let mut proto_request = ProtoGenerateRequest::Sglang(Box::new(proto_request_inner));
+        let mut proto_request =
+            ProtoGenerateRequest::Sglang(std::sync::Arc::new(proto_request_inner));
 
         // Inject Harmony stop token IDs into sampling params for ALL Harmony requests
         // These stop tokens (<|return|> and <|call|>) prevent the model from generating

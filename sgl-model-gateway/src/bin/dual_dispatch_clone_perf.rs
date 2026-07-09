@@ -35,7 +35,7 @@ fn create_large_sglang_request() -> sglang::GenerateRequest {
 
 fn main() {
     let sglang_req = create_large_sglang_request();
-    let proto_request = ProtoGenerateRequest::Sglang(Box::new(sglang_req));
+    let proto_request = ProtoGenerateRequest::Sglang(std::sync::Arc::new(sglang_req));
 
     // Warmup
     for _ in 0..1000 {

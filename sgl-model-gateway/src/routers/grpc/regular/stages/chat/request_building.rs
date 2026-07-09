@@ -82,7 +82,7 @@ impl PipelineStage for ChatRequestBuildingStage {
                         error!(function = "ChatRequestBuildingStage::execute", error = %e, "Failed to build SGLang generate request");
                         error::bad_request("invalid_request_parameters", format!("Invalid request parameters: {}", e))
                     })?;
-                ProtoGenerateRequest::Sglang(Box::new(req))
+                ProtoGenerateRequest::Sglang(std::sync::Arc::new(req))
             }
             GrpcClient::Vllm(vllm_client) => {
                 let req = vllm_client
@@ -97,7 +97,7 @@ impl PipelineStage for ChatRequestBuildingStage {
                         error!(function = "ChatRequestBuildingStage::execute", error = %e, "Failed to build vLLM generate request");
                         error::bad_request("invalid_request_parameters", format!("Invalid request parameters: {}", e))
                     })?;
-                ProtoGenerateRequest::Vllm(Box::new(req))
+                ProtoGenerateRequest::Vllm(std::sync::Arc::new(req))
             }
         };
 

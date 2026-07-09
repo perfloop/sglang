@@ -131,12 +131,20 @@ impl GrpcClient {
         req: ProtoGenerateRequest,
     ) -> Result<ProtoStream, Box<dyn std::error::Error + Send + Sync>> {
         match (self, req) {
-            (Self::Sglang(client), ProtoGenerateRequest::Sglang(boxed_req)) => {
-                let stream = client.generate(*boxed_req).await?;
+            (Self::Sglang(client), ProtoGenerateRequest::Sglang(req)) => {
+                let sglang_req = match Arc::try_unwrap(req) {
+                    Ok(r) => r,
+                    Err(arc_req) => (*arc_req).clone(),
+                };
+                let stream = client.generate(sglang_req).await?;
                 Ok(ProtoStream::Sglang(stream))
             }
-            (Self::Vllm(client), ProtoGenerateRequest::Vllm(boxed_req)) => {
-                let stream = client.generate(*boxed_req).await?;
+            (Self::Vllm(client), ProtoGenerateRequest::Vllm(req)) => {
+                let vllm_req = match Arc::try_unwrap(req) {
+                    Ok(r) => r,
+                    Err(arc_req) => (*arc_req).clone(),
+                };
+                let stream = client.generate(vllm_req).await?;
                 Ok(ProtoStream::Vllm(stream))
             }
             _ => panic!("Mismatched client and request types"),

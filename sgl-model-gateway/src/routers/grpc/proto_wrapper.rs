@@ -31,8 +31,8 @@ impl ProtoRequest {
 /// Unified GenerateRequest that works with both backends
 #[derive(Clone)]
 pub enum ProtoGenerateRequest {
-    Sglang(Box<sglang::GenerateRequest>),
-    Vllm(Box<vllm::GenerateRequest>),
+    Sglang(std::sync::Arc<sglang::GenerateRequest>),
+    Vllm(std::sync::Arc<vllm::GenerateRequest>),
 }
 
 impl ProtoGenerateRequest {
@@ -47,7 +47,7 @@ impl ProtoGenerateRequest {
     /// Get mutable SGLang variant (panics if vLLM)
     pub fn as_sglang_mut(&mut self) -> &mut sglang::GenerateRequest {
         match self {
-            Self::Sglang(req) => req,
+            Self::Sglang(req) => std::sync::Arc::make_mut(req),
             Self::Vllm(_) => panic!("Expected SGLang GenerateRequest, got vLLM"),
         }
     }
@@ -63,7 +63,7 @@ impl ProtoGenerateRequest {
     /// Get mutable vLLM variant (panics if SGLang)
     pub fn as_vllm_mut(&mut self) -> &mut vllm::GenerateRequest {
         match self {
-            Self::Vllm(req) => req,
+            Self::Vllm(req) => std::sync::Arc::make_mut(req),
             Self::Sglang(_) => panic!("Expected vLLM GenerateRequest, got SGLang"),
         }
     }

@@ -78,7 +78,7 @@ impl PipelineStage for GenerateRequestBuildingStage {
                         error!(function = "GenerateRequestBuildingStage::execute", error = %e, "Failed to build SGLang generate request");
                         error::bad_request("build_request_failed", e)
                     })?;
-                ProtoGenerateRequest::Sglang(Box::new(req))
+                ProtoGenerateRequest::Sglang(std::sync::Arc::new(req))
             }
             GrpcClient::Vllm(vllm_client) => {
                 let req = vllm_client
@@ -92,7 +92,7 @@ impl PipelineStage for GenerateRequestBuildingStage {
                         error!(function = "GenerateRequestBuildingStage::execute", error = %e, "Failed to build vLLM generate request");
                         error::bad_request("build_request_failed", e)
                     })?;
-                ProtoGenerateRequest::Vllm(Box::new(req))
+                ProtoGenerateRequest::Vllm(std::sync::Arc::new(req))
             }
         };
 
